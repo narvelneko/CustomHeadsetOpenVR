@@ -32,5 +32,15 @@ namespace PimaxP2 {
 	bool SavedEyeFov(vr::EVREye eye, pvrFovPort& fov);
 	bool SavedDistortedUV(vr::EVREye eye, pvrVector2f uv, pvrVector2f outUV[3]);
 	bool SavedFovTextureSize(pvrSizei& size);
+
+	// For PimaxLighthouseShim::RunPvrBackground (PVR thread). P2 headsets only (returns at once for others),
+	// if savePvrData is on: saves PVR's data (PvrCache) once per PVR connection, 15 s after it connects,
+	// and again after an IPD change, unless the saved file is up to date. Reading it switches
+	// view_rotation_fix in PVR for a moment, so that is done only while PVR doesn't render to the headset
+	// (no_render on) and the Lighthouse shim drives it (lighthouseShimActive: only the active shim's
+	// call saves). Saved data is used for the identified headset from then on. Returns true if
+	// view_rotation_fix was changed (and set back): a distortion built from PVR meanwhile may have used
+	// the other projection.
+	bool RunPvrDataSaver(bool lighthouseShimActive);
 #endif
 }

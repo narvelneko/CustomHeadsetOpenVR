@@ -186,6 +186,11 @@ void PimaxLighthouseShim::RunPvrBackground() {
 	}
 
 	PollMagicAttach();
+
+	// P2 headsets: save PVR's data for running without pi_server (savePvrData)
+	if (PimaxP2::RunPvrDataSaver(isActive)) {
+		RequestDistortionRebuild();
+	}
 #endif
 }
 

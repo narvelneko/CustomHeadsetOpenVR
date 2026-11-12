@@ -282,6 +282,9 @@ public:
 		bool enablePimaxHandTracking = false;
 		// if the legacy bone transform translation should be used, for testing
 		bool pimaxLegacyHandTrackingInput = false;
+		// P2 headsets (5K/8K series, Artisan): save PVR's data (FOV, eye poses, distortion) while
+		// PVR is connected, to use it when the headset runs on Lighthouse with pi_server closed
+		bool savePvrData = true;
 	};
 	
 	class MeganeX8KConfig : public BaseHeadsetConfig{

@@ -203,6 +203,9 @@ void parseBaseHeadsetConfig(json headsetData, Config::BaseHeadsetConfig& headset
 		if(headsetData["pimaxLegacyHandTrackingInput"].is_boolean()){
 			pimaxConfig->pimaxLegacyHandTrackingInput = headsetData["pimaxLegacyHandTrackingInput"].get<bool>();
 		}
+		if(headsetData["savePvrData"].is_boolean()){
+			pimaxConfig->savePvrData = headsetData["savePvrData"].get<bool>();
+		}
 	}
 }
 
@@ -601,6 +604,7 @@ ordered_json baseHeadsetInfo(Config::BaseHeadsetConfig& headsetConfig){
 		result["forcePimaxPassthrough"] = pimaxConfig->forcePimaxPassthrough;
 		result["enablePimaxHandTracking"] = pimaxConfig->enablePimaxHandTracking;
 		result["pimaxLegacyHandTrackingInput"] = pimaxConfig->pimaxLegacyHandTrackingInput;
+		result["savePvrData"] = pimaxConfig->savePvrData;
 	}
 	return result;
 }

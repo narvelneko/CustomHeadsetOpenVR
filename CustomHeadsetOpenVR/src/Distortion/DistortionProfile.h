@@ -42,6 +42,9 @@ public:
 	
 	
 	
+	// profiles are deleted through this class
+	virtual ~DistortionProfile() = default;
+	
 	// called before the other functions are called
 	virtual void Initialize(){};
 	// fU and fV are normalized to be within [-1, 1] within the smallest square that fit on the screen

@@ -78,6 +78,9 @@
     <ClInclude Include="src\Helpers\PvrCache.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\Helpers\PimaxP2.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\Config\Config.h">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -198,6 +201,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Helpers\PvrCache.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helpers\PimaxP2.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Distortion\PimaxDistortionProfile.cpp">

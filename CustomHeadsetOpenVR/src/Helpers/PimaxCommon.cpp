@@ -14,6 +14,7 @@
 #include "../Driver/DeviceProvider.h"
 #include "EyeTrackingOutput.h"
 #include "MiscHelper.h"
+#include "PimaxP2.h"
 
 // For "hmd_buttons" config. Not in PVR SDK.
 enum class HmdButton : int {
@@ -466,6 +467,9 @@ static bool EnsurePvrSession(bool forceTryConnect = false) {
 		const std::string_view productName = info.ProductName;
 		pvrDisplayInfo displayInfo = {};
 		pvr_getEyeDisplayInfo(s_pvrSession, pvrEye_Left, &displayInfo);
+		if(!PimaxP2::IsPvrPanelReady(info.ProductId, displayInfo.width, displayInfo.height)){
+			return false;
+		}
 		s_info.headsetType = TypeFromProduct(info.ProductId, productName, info.SerialNumber);
 		if(s_info.headsetType == Config::HeadsetType::CrystalSuper50PPD){
 			char codename[256] = {};

@@ -1,6 +1,7 @@
 #include "PimaxP2.h"
 
 #include <hidapi/hidapi.h>
+#include <atomic>
 #include <chrono>
 #include <mutex>
 #include <set>
@@ -79,6 +80,12 @@ std::optional<Identity> Identify(){
 	return result;
 }
 
+static std::atomic<bool> s_waitForPanelWithoutLimit = false;
+
+void WaitForPanelWithoutLimit(){
+	s_waitForPanelWithoutLimit = true;
+}
+
 bool IsPvrPanelReady(int pvrProductId, int panelWidth, int panelHeight){
 	if(pvrProductId != kUsbProductId){
 		return true;
@@ -101,7 +108,7 @@ bool IsPvrPanelReady(int pvrProductId, int panelWidth, int panelHeight){
 		s_logged = false;
 	}
 	s_lastCall = now;
-	if(now - *s_waitStart < std::chrono::seconds(15)){
+	if(s_waitForPanelWithoutLimit || now - *s_waitStart < std::chrono::seconds(15)){
 		if(!s_logged){
 			DriverLog("PVR connected but the panel isn't ready yet (0x0); waiting");
 			s_logged = true;

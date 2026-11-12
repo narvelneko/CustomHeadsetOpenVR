@@ -4,6 +4,7 @@
 #include "../Helpers/MiscHelper.h"
 #ifdef PVR_EXISTS
 #include "../Helpers/PimaxCamera.h"
+#include "../Helpers/PimaxP2PvrData.h"
 
 #include <memory>
 
@@ -90,6 +91,20 @@ void PimaxLighthouseShim::RunFrame(){
 		return;
 	}
 #ifdef PVR_EXISTS
+	if (PimaxP2::PvrTookOver()) {
+		// a P2 headset identified without PVR (PimaxP2PvrData): apply PVR's settings and rebuild from it
+		{
+			shared_lock_guard<std::shared_mutex> lock(PimaxCommon::pvrLock);
+			pvr_setIntConfig(GetPvrSession(), "view_rotation_fix", GetConfig().parallelProjection);
+		}
+		if (GetConfig().hiddenArea.enable && GetConfig().hiddenArea.autoHiddenArea) {
+			SetVisibilityMeshes();
+		}
+		RequestDistortionRebuild();
+	} else if (PimaxP2::PvrWentAway()) {
+		// back to the saved data
+		RequestDistortionRebuild();
+	}
 	if (driverConfig.hasBeenUpdated) {
 		shared_lock_guard<std::shared_mutex> lock(PimaxCommon::pvrLock);
 		// We need to set this config value before UpdateSettings() runs.

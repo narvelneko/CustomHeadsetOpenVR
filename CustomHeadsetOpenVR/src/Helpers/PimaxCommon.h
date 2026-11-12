@@ -27,6 +27,9 @@ struct PimaxInfo {
 	std::string headsetName;
 };
 
+// the model from a PVR product id and name
+Config::HeadsetType TypeFromProduct(int productId, std::string_view productName, std::string_view serialNumber);
+
 class PimaxCommon {
 public:
 #ifdef PVR_EXISTS

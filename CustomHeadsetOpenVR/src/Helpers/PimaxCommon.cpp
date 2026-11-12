@@ -15,6 +15,7 @@
 #include "EyeTrackingOutput.h"
 #include "MiscHelper.h"
 #include "PimaxP2.h"
+#include "PimaxP2PvrData.h"
 
 // For "hmd_buttons" config. Not in PVR SDK.
 enum class HmdButton : int {
@@ -620,6 +621,7 @@ bool PimaxCommon::TryDirectConnection() {
 	)){
 		s_info.directConnected |= pimaxDirectUSB.Start();
 		s_info.connected |= s_info.directConnected;
+		PimaxP2::IdentifyWithoutPvr(s_info);
 	}
 	return s_info.directConnected;
 }

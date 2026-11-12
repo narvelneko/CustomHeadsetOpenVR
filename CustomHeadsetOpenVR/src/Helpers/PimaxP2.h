@@ -41,4 +41,7 @@ namespace PimaxP2 {
 	// headset (PVR product id 0x0101) reports a 0x0 panel, for up to 15 s per wait (logged once);
 	// true at once for any other product id.
 	bool IsPvrPanelReady(int pvrProductId, int panelWidth, int panelHeight);
+	// From now on IsPvrPanelReady waits for the panel without the 15 s limit: the headset runs on saved
+	// data meanwhile (PimaxP2PvrData), which is better than PVR without a panel
+	void WaitForPanelWithoutLimit();
 }

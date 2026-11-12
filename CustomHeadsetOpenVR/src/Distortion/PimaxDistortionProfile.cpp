@@ -6,10 +6,13 @@
 
 #define NOMINMAX
 #include "../Helpers/PimaxCommon.h"
+#include "../Helpers/PimaxP2PvrData.h"
 
 void PimaxDistortionProfile::GetProjectionRaw(vr::EVREye eEye, float* pfLeft, float* pfRight, float* pfBottom, float* pfTop) {
     pvrEyeRenderInfo eyeInfo = {};
-    pvr_getEyeRenderInfo(PimaxCommon::GetPvrSession(), eEye == vr::Eye_Left ? pvrEye_Left : pvrEye_Right, &eyeInfo);
+    if(!PimaxP2::SavedEyeFov(eEye, eyeInfo.Fov)){
+        pvr_getEyeRenderInfo(PimaxCommon::GetPvrSession(), eEye == vr::Eye_Left ? pvrEye_Left : pvrEye_Right, &eyeInfo);
+    }
 
     *pfLeft = -eyeInfo.Fov.LeftTan;
     *pfRight = eyeInfo.Fov.RightTan;
@@ -49,7 +52,9 @@ Point2D PimaxDistortionProfile::ComputeDistortion(vr::EVREye eEye, ColorChannel 
     fU = fU / 2.0f + 0.5f;
     fV = fV / 2.0f + 0.5f;
     
-    pvr_getHmdDistortedUV(PimaxCommon::GetPvrSession(), (pvrEyeType)eEye, { fU, fV }, outUV);
+    if(!PimaxP2::SavedDistortedUV(eEye, { fU, fV }, outUV)){
+        pvr_getHmdDistortedUV(PimaxCommon::GetPvrSession(), (pvrEyeType)eEye, { fU, fV }, outUV);
+    }
 
     float fX = (outUV[colorChannel].x - 0.5f) * 2.f;
     float fY = (outUV[colorChannel].y - 0.5f) * 2.f;
@@ -59,9 +64,11 @@ Point2D PimaxDistortionProfile::ComputeDistortion(vr::EVREye eEye, ColorChannel 
 
 void PimaxDistortionProfile::GetRecommendedRenderTargetSize(uint32_t* pnWidth, uint32_t* pnHeight) {
     pvrEyeRenderInfo eyeInfo = {};
-    pvr_getEyeRenderInfo(PimaxCommon::GetPvrSession(), pvrEye_Left, &eyeInfo);
     pvrSizei viewportSize = {};
-    pvr_getFovTextureSize(PimaxCommon::GetPvrSession(), pvrEye_Left, eyeInfo.Fov, 1.f, &viewportSize);
+    if(!PimaxP2::SavedFovTextureSize(viewportSize)){
+        pvr_getEyeRenderInfo(PimaxCommon::GetPvrSession(), pvrEye_Left, &eyeInfo);
+        pvr_getFovTextureSize(PimaxCommon::GetPvrSession(), pvrEye_Left, eyeInfo.Fov, 1.f, &viewportSize);
+    }
 
     *pnWidth = (uint32_t)viewportSize.w;
     *pnWidth = (*pnWidth + 3) / 4 * 4;

@@ -8,6 +8,7 @@
 #include <thread>
 #include <cmath>
 #include <mutex>
+#include <atomic>
 
 // A class that implements almost all functionality to run a headset as a native SteamVR headset
 class BaseHeadsetShim : public ShimDefinition{
@@ -91,4 +92,10 @@ public:
 	virtual void RunFrame() override;
 	
 	void UpdateSettings();
+	
+	// rebuild the distortion (and FOV, render target size) in the next frame, eg: when its data source changed; any thread
+	void RequestDistortionRebuild();
+	
+private:
+	std::atomic<bool> distortionRebuildRequested{false};
 };

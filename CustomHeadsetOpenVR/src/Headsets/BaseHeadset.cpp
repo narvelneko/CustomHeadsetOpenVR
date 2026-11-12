@@ -472,11 +472,15 @@ void BaseHeadsetShim::RunFrame(){
 		lastFrameTime = now;
 	}
 	
-	if(driverConfig.hasBeenUpdated || ((now - lastDistortionChangeTime) > 0.5 && needsDistortionFinalization)){
+	if(driverConfig.hasBeenUpdated || distortionRebuildRequested || ((now - lastDistortionChangeTime) > 0.5 && needsDistortionFinalization)){
 		UpdateSettings();
 	}
 	
 	SubRunFrame();
+}
+
+void BaseHeadsetShim::RequestDistortionRebuild(){
+	distortionRebuildRequested = true;
 }
 
 void BaseHeadsetShim::UpdateSettings(){
@@ -593,6 +597,10 @@ void BaseHeadsetShim::UpdateSettings(){
 	shouldReInitializeDistortion |= GetConfigOld().fovBurnInPrevention != GetConfig().fovBurnInPrevention;
 	shouldReInitializeDistortion |= GetConfigOld().fovClamping != GetConfig().fovClamping;
 	shouldReInitializeDistortion = shouldReInitializeDistortion && driverConfig.hasBeenUpdated;
+	if(distortionRebuildRequested.exchange(false)){
+		DriverLog("Rebuilding distortion: its data source changed");
+		shouldReInitializeDistortion = true;
+	}
 	
 	std::lock_guard<std::mutex> lock(distortionProfileLock);
 	bool loadedNewDistortionProfile = distortionProfileConstructor.LoadDistortionProfile(GetConfig().distortionProfile);

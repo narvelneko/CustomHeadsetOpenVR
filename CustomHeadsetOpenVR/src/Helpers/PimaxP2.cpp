@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cwchar>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -407,7 +408,7 @@ void StartDisplayPower(){
 	DisplayPowerHolder() = std::make_shared<DisplayPower>();
 }
 
-void StopDisplayPower(){
+static void StopDisplayPower(){
 	std::shared_ptr<DisplayPower> displayPower;
 	{
 		std::lock_guard<std::mutex> lock(s_displayPowerLock);
@@ -428,6 +429,124 @@ void WaitForDisplayBeforeActivation(){
 	if(displayPower){
 		displayPower->WaitBeforeActivation();
 	}
+}
+
+// for ReadIpdRaw, guarded by s_hidLock: the path of the 8K X's interface 0, found once (again after it
+// can't be opened), and when it was last looked for in vain
+static std::string s_ipdDevicePath;
+static std::optional<std::chrono::steady_clock::time_point> s_ipdDeviceMissedAt;
+
+std::optional<uint16_t> ReadIpdRaw(std::string_view serial){
+	std::lock_guard<std::mutex> hidLock(s_hidLock);
+	if(s_ipdDevicePath.empty()){
+		const auto now = std::chrono::steady_clock::now();
+		if(s_ipdDeviceMissedAt && now - *s_ipdDeviceMissedAt < std::chrono::seconds(10)){
+			return std::nullopt;
+		}
+		hid_init();
+		hid_device_info* devices = hid_enumerate(kUsbVendorId, kUsbProductId);
+		for(hid_device_info* device = devices; device && s_ipdDevicePath.empty(); device = device->next){
+			if(device->interface_number == 0 && device->path && TypeFromUsbProductName(Narrow(device->product_string)) == Config::HeadsetType::Pimax8KX
+				&& (serial.empty() || Narrow(device->serial_number) == serial)){
+				s_ipdDevicePath = device->path;
+			}
+		}
+		hid_free_enumeration(devices);
+		if(s_ipdDevicePath.empty()){
+			s_ipdDeviceMissedAt = now;
+			return std::nullopt;
+		}
+		s_ipdDeviceMissedAt.reset();
+	}
+	hid_device* device = hid_open_path(s_ipdDevicePath.c_str());
+	if(!device){
+		// unplugged, or another device now
+		s_ipdDevicePath.clear();
+		return std::nullopt;
+	}
+	unsigned char report[64] = {};
+	report[0] = 0xF0;
+	const int length = hid_get_feature_report(device, report, sizeof(report));
+	hid_close(device);
+	if(length < 38){
+		return std::nullopt;
+	}
+	return (uint16_t)(report[36] | (report[37] << 8));
+}
+
+// Calls tick about once a second until stopped
+class IpdFollower {
+public:
+	explicit IpdFollower(std::function<void()> tick) : tick(std::move(tick)) {
+		thread = std::thread(&IpdFollower::Run, this);
+	}
+
+	~IpdFollower(){
+		Stop();
+	}
+
+	IpdFollower(const IpdFollower&) = delete;
+	IpdFollower& operator=(const IpdFollower&) = delete;
+
+	void Stop(){
+		{
+			std::lock_guard<std::mutex> lock(mutex);
+			stopping = true;
+			wake.notify_all();
+		}
+		if(thread.joinable()){
+			thread.join();
+		}
+	}
+
+private:
+	void Run(){
+		std::unique_lock<std::mutex> lock(mutex);
+		while(!stopping){
+			lock.unlock();
+			try{
+				tick();
+			}catch(const std::exception& e){
+				DriverLog("IPD follower: %s", e.what());
+			}catch(...){
+				DriverLog("IPD follower: unknown exception");
+			}
+			lock.lock();
+			wake.wait_for(lock, std::chrono::seconds(1), [this]{ return stopping; });
+		}
+	}
+
+	const std::function<void()> tick;
+	std::mutex mutex;
+	std::condition_variable wake;
+	// guarded by mutex
+	bool stopping = false;
+	// started last, after the members it uses
+	std::thread thread;
+};
+
+static std::mutex s_ipdFollowerLock;
+// never destroyed, like DisplayPowerHolder
+static std::unique_ptr<IpdFollower>& IpdFollowerHolder(){
+	static std::unique_ptr<IpdFollower>* s_holder = new std::unique_ptr<IpdFollower>();
+	return *s_holder;
+}
+
+void StartIpdFollower(std::function<void()> tick){
+	std::lock_guard<std::mutex> lock(s_ipdFollowerLock);
+	if(!IpdFollowerHolder()){
+		IpdFollowerHolder() = std::make_unique<IpdFollower>(std::move(tick));
+	}
+}
+
+void Stop(){
+	StopDisplayPower();
+	std::unique_ptr<IpdFollower> follower;
+	{
+		std::lock_guard<std::mutex> lock(s_ipdFollowerLock);
+		follower = std::move(IpdFollowerHolder());
+	}
+	follower.reset();
 }
 
 }

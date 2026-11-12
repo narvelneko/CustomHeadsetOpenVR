@@ -134,7 +134,7 @@ bool CustomHeadsetDeviceProvider::ShouldBlockStandbyMode(){
 	return false;
 }
 void CustomHeadsetDeviceProvider::Cleanup(){
-	PimaxP2::StopDisplayPower();
+	PimaxP2::Stop();
 }
 void CustomHeadsetDeviceProvider::EnterStandby(){}
 void CustomHeadsetDeviceProvider::LeaveStandby(){}

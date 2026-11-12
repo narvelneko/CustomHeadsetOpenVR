@@ -6,6 +6,7 @@
 #include "../Config/Config.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -55,8 +56,6 @@ namespace PimaxP2 {
 	// Does nothing unless the 8K X is enabled and its displayPowerWithoutPimax is set, or if it is
 	// already running. Call when the driver starts, after the config is loaded.
 	void StartDisplayPower();
-	// Stops the thread and closes the headset; called when the driver shuts down
-	void StopDisplayPower();
 	// The display appears about 3.4 s after the sequence, and SteamVR looks for it when the HMD is
 	// activated. Call before activating the HMD: waits until 4 s have passed since the display-on
 	// sequence was first sent (if it was). Returns at once when the display power isn't running.
@@ -64,4 +63,17 @@ namespace PimaxP2 {
 	// Called while PVR is connected (PVR thread, every 20 ms); the display power counts PVR as connected
 	// until a second after the last call
 	void NotePvrConnected();
+
+	// The raw IPD value the 8K X reports: HID feature report 0xF0 on interface 0, read with GET (nothing is
+	// written), bytes 36-37 little-endian, of the headset with this USB serial number (any 8K X if empty).
+	// Opens the interface for each read and closes it again, so it never holds the headset when pi_server
+	// wants it. nullopt when it can't be read; when the headset isn't found it is looked for again only
+	// after 10 s.
+	std::optional<uint16_t> ReadIpdRaw(std::string_view serial);
+	// Calls tick about once a second from a thread of its own, until Stop (an exception from tick is
+	// logged, and the next tick runs as usual). Does nothing if already running.
+	void StartIpdFollower(std::function<void()> tick);
+
+	// Stops the display power and the IPD follower; called when the driver shuts down
+	void Stop();
 }

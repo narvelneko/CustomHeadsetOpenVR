@@ -1,7 +1,9 @@
 #pragma once
 // Pimax P2 headsets (5K/8K series, Artisan) without PVR: when pi_server is closed (eg: a legacy launch on
 // Lighthouse), the headset is identified over USB (PimaxP2::Identify) and PVR's data (FOV, distortion,
-// render size) comes from the data saved while PVR was connected (PvrCache, <config>/pvr-data-<serial>.json).
+// render size) comes from the data saved while PVR was connected: the IPD profile (PvrProfile,
+// <config>/pvr-profile-<serial>.json) blended for the IPD the headset reports over HID, or else the single
+// capture (PvrCache, <config>/pvr-data-<serial>.json).
 // While PVR isn't connected to a headset identified this way, the Saved* functions answer instead of PVR.
 // Other headsets are never identified here, so for them every function returns false at once.
 #include "PimaxCommon.h"
@@ -21,10 +23,11 @@ namespace PimaxP2 {
 #ifdef PVR_EXISTS
 	// For the shim's RunFrame, with a headset identified by IdentifyWithoutPvr. PvrTookOver: true once each
 	// time PVR connects (its values are written by then); from then on the Saved* functions return false
-	// and PVR is used. PvrWentAway: true once each time PVR is lost again; the Saved* functions answer
-	// again. The caller rebuilds what it built from the other source.
+	// and PVR is used. SavedDataChanged: true once each time PVR is lost again (the Saved* functions
+	// answer again) or the saved data changed while in use (the IPD profile was blended for a new IPD).
+	// The caller rebuilds what it built from the other source.
 	bool PvrTookOver();
-	bool PvrWentAway();
+	bool SavedDataChanged();
 
 	// Instead of PVR while a headset identified without PVR has no PVR: the saved values for the
 	// view_rotation_fix that parallelProjection selects. Without a saved file: tangent 1 (90 degrees),

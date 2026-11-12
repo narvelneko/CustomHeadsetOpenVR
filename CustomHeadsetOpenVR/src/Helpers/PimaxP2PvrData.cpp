@@ -1,5 +1,6 @@
 #include "PimaxP2PvrData.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -18,6 +19,7 @@
 #include "MiscHelper.h"
 #include "PimaxP2.h"
 #include "PvrCache.h"
+#include "PvrProfile.h"
 
 namespace PimaxP2 {
 
@@ -29,17 +31,53 @@ static std::atomic<Config::HeadsetType> s_identifiedType = Config::HeadsetType::
 static std::atomic<uint32_t> s_identifiedWidth = 0;
 static std::atomic<uint32_t> s_identifiedHeight = 0;
 // the Saved* functions answer instead of PVR: from identification until PVR connects, and again after
-// PVR went away (PvrTookOver, PvrWentAway)
+// PVR went away (PvrTookOver, SavedDataChanged)
 static std::atomic<bool> s_useSavedData = false;
 #ifdef PVR_EXISTS
-// the checked saved data of the identified headset, or null; owned by s_loadedData
-static std::atomic<const PvrCache::Data*> s_savedData = nullptr;
-// guards s_loadedData and s_identifiedSerial
+// The saved data the Saved* functions answer from (null: none, the fallback). A reader copies the
+// pointer under the lock, so the data lives at least until that reader is done with it.
+static std::mutex s_savedDataPointerLock;
+static std::shared_ptr<const PvrCache::Data> s_savedData;
+
+static std::shared_ptr<const PvrCache::Data> SavedData(){
+	std::lock_guard<std::mutex> lock(s_savedDataPointerLock);
+	return s_savedData;
+}
+
+static void SetSavedData(std::shared_ptr<const PvrCache::Data> data){
+	std::lock_guard<std::mutex> lock(s_savedDataPointerLock);
+	s_savedData = std::move(data);
+}
+
+// guards s_loadedData, s_loadedProfiles and s_identifiedSerial
 static std::mutex s_savedDataLock;
-// saved data per serial number (null if there is none or it can't be used); entries are never freed,
-// the Saved* functions may be reading them
-static std::map<std::string, std::unique_ptr<const PvrCache::Data>> s_loadedData;
+// saved data per serial number (null if there is none or it can't be used)
+static std::map<std::string, std::shared_ptr<const PvrCache::Data>> s_loadedData;
 static std::string s_identifiedSerial;
+
+// an IPD profile with its HID calibration, made once
+struct LoadedProfile {
+	PvrProfile::Profile profile;
+	PvrProfile::HidCalibration calibration;
+};
+// profiles per serial number (null if there is none or it can't be used); never freed
+static std::map<std::string, std::unique_ptr<const LoadedProfile>> s_loadedProfiles;
+// The IPD profile of the identified headset, or null: the saved data is then the profile blended for
+// the headset's IPD (FollowIpd, 8K X only; other P2 headsets keep the fixed IPD)
+static std::atomic<const LoadedProfile*> s_profile = nullptr;
+// metres: the IPD the saved data was blended for, and the IPD used when the headset's was never read
+// (the single saved capture's, i.e. the last one PVR had, or the middle capture)
+static std::atomic<float> s_appliedIpd = 0.f;
+static std::atomic<float> s_fixedIpd = 0.f;
+// Written at identification, before the follower thread starts: the USB serial number whose IPD is
+// read, and the texture sizes [view_rotation_fix][eye] (width, height) every blend keeps, those of the
+// first one, so that the render target size doesn't change with the IPD
+static std::string s_hidSerial;
+static int s_pinnedTexture[2][2][2] = {};
+// the identified headset's info, to keep its IPD current while there is no PVR (as PvrThread does with PVR's)
+static PimaxInfo* s_info = nullptr;
+// set when the saved data changed (IPD); SavedDataChanged reports it
+static std::atomic<bool> s_savedDataChanged = false;
 
 // <config folder>/pvr-data-<serial>.json; empty if the serial can't name a file
 static std::string SavedPvrDataPath(std::string_view serial){
@@ -50,36 +88,198 @@ static std::string SavedPvrDataPath(std::string_view serial){
 // The saved PVR data of a P2 headset found over USB, checked against it (product id and USB serial
 // number); null if there is none or it can't be used. Each serial number's file is read and logged
 // once; the result is kept.
-static const PvrCache::Data* LoadSavedPvrData(const Identity& identity){
+static std::shared_ptr<const PvrCache::Data> LoadSavedPvrData(const Identity& identity, bool logMissing){
 	std::lock_guard<std::mutex> lock(s_savedDataLock);
 	const auto found = s_loadedData.find(identity.serialNumber);
 	if(found != s_loadedData.end()){
-		return found->second.get();
+		return found->second;
 	}
-	std::unique_ptr<const PvrCache::Data>& result = s_loadedData[identity.serialNumber];
+	std::shared_ptr<const PvrCache::Data>& result = s_loadedData[identity.serialNumber];
 	const std::string serial = MaskSerial(identity.serialNumber);
 	const std::string path = SavedPvrDataPath(identity.serialNumber);
 	if(path.empty()){
 		DriverLog("No saved PVR data: the USB serial number '%s' can't be used to find it", serial.c_str());
 		return nullptr;
 	}
-	auto data = std::make_unique<PvrCache::Data>();
+	auto data = std::make_shared<PvrCache::Data>();
 	std::string error;
 	if(!PvrCache::Load(path, *data, error)){
 		if(error == "no file"){
-			DriverLog("No saved PVR data for serial %s; run the headset with Pimax Play once to save it", serial.c_str());
+			if(logMissing){
+				DriverLog("No saved PVR data for serial %s; run the headset with Pimax Play once to save it", serial.c_str());
+			}
 		}else{
 			DriverLog("Not using the saved PVR data for serial %s: %s", serial.c_str(), error.c_str());
 		}
 		return nullptr;
 	}
 	error = PvrCache::CheckHeadset(*data, kUsbProductId, identity.serialNumber);
+	if(error.empty()){
+		error = PvrProfile::CheckBounds(*data);
+	}
 	if(!error.empty()){
 		DriverLog("Not using the saved PVR data for serial %s: %s", serial.c_str(), error.c_str());
 		return nullptr;
 	}
 	result = std::move(data);
+	return result;
+}
+
+// The IPD profile of a P2 headset found over USB, checked against it like LoadSavedPvrData; null if
+// there is none or it can't be used. Read and logged once per serial number.
+static const LoadedProfile* LoadProfile(const Identity& identity){
+	std::lock_guard<std::mutex> lock(s_savedDataLock);
+	const auto found = s_loadedProfiles.find(identity.serialNumber);
+	if(found != s_loadedProfiles.end()){
+		return found->second.get();
+	}
+	std::unique_ptr<const LoadedProfile>& result = s_loadedProfiles[identity.serialNumber];
+	const std::string serial = MaskSerial(identity.serialNumber);
+	const std::string name = PvrProfile::FileName(identity.serialNumber);
+	if(name.empty()){
+		return nullptr;
+	}
+	auto loaded = std::make_unique<LoadedProfile>();
+	PvrProfile::Profile& profile = loaded->profile;
+	std::string error;
+	if(!PvrProfile::Load(driverConfigLoader.GetConfigFolder() + name, profile, error)){
+		if(error == "no file"){
+			DriverLog("No IPD profile for serial %s (pvrcache sweep makes one)", serial.c_str());
+		}else{
+			DriverLog("Not using the IPD profile for serial %s: %s", serial.c_str(), error.c_str());
+		}
+		return nullptr;
+	}
+	error = PvrProfile::CheckHeadset(profile, kUsbProductId, identity.serialNumber);
+	if(!error.empty()){
+		DriverLog("Not using the IPD profile for serial %s: %s", serial.c_str(), error.c_str());
+		return nullptr;
+	}
+	loaded->calibration = PvrProfile::MakeHidCalibration(profile);
+	const float gap = PvrProfile::LargestGap(profile);
+	if(gap > 0.004f){
+		DriverLog("Warning: the IPD profile for serial %s has a gap of %.1f mm between captures; the lens correction is less exact there (sweep again, slowly)",
+			serial.c_str(), gap * 1000.f);
+	}
+	const PvrCache::Eye& first = profile.captures.front().data.eyes[0][0];
+	for(const PvrProfile::Capture& capture : profile.captures){
+		const PvrCache::Eye& eye = capture.data.eyes[0][0];
+		if(eye.textureWidth != first.textureWidth || eye.textureHeight != first.textureHeight){
+			DriverLog("The IPD profile's texture sizes differ between captures (%dx%d at %.1f mm, %dx%d at %.1f mm); the size at activation is kept",
+				first.textureWidth, first.textureHeight, profile.MinIpd() * 1000.f, eye.textureWidth, eye.textureHeight, capture.pvrIpd * 1000.f);
+			break;
+		}
+	}
+	result = std::move(loaded);
 	return result.get();
+}
+
+static float ClampToProfile(const PvrProfile::Profile& profile, float ipd){
+	return ipd < profile.MinIpd() ? profile.MinIpd() : ipd > profile.MaxIpd() ? profile.MaxIpd() : ipd;
+}
+
+// The profile blended for an IPD, with the pinned texture sizes
+static std::shared_ptr<const PvrCache::Data> MakeBlend(const PvrProfile::Profile& profile, float ipd){
+	auto data = std::make_shared<PvrCache::Data>(PvrProfile::Blend(profile, ipd));
+	for(int vrf = 0; vrf < 2; vrf++){
+		for(int e = 0; e < 2; e++){
+			data->eyes[vrf][e].textureWidth = s_pinnedTexture[vrf][e][0];
+			data->eyes[vrf][e].textureHeight = s_pinnedTexture[vrf][e][1];
+		}
+	}
+	return data;
+}
+
+struct IpdReading {
+	bool valid = false;
+	// metres
+	float ipd = 0;
+	const char* source = "";
+	// HID raw value, -1 if none
+	int raw = -1;
+};
+
+// The headset's IPD over HID: calibrated with the profile's captures (or Monado's formula if none has a
+// raw value). Not valid if it can't be read or isn't plausible.
+static IpdReading ReadIpd(const LoadedProfile& loaded, std::string_view serial){
+	IpdReading reading;
+	const std::optional<uint16_t> raw = ReadIpdRaw(serial);
+	if(!raw){
+		return reading;
+	}
+	reading.raw = *raw;
+	if(PvrProfile::CalibratedIpd(loaded.calibration, *raw, reading.ipd)){
+		reading.source = "HID, calibrated with the profile";
+	}else{
+		reading.ipd = PvrProfile::HidFormulaIpd(*raw);
+		reading.source = "HID, Monado's formula (no raw values in the profile)";
+	}
+	reading.valid = reading.ipd > 0.045f && reading.ipd < 0.085f;
+	return reading;
+}
+
+// Runs about once a second on PimaxP2's IPD follower thread (8K X with a profile). While there is no
+// PVR it blends the profile again when PvrProfile::IpdFilter says so. When HID can't be read it holds
+// the applied IPD; the fixed IPD is used only while HID was never read.
+static void FollowIpd(){
+	// only this thread uses these
+	static std::string s_lastSource;
+	static bool s_hidEverRead = false;
+	static PvrProfile::IpdFilter s_filter;
+	const LoadedProfile* loaded = s_profile;
+	if(!loaded || !s_useSavedData){
+		// PVR gives the IPD while it is connected
+		s_filter.Reset();
+		return;
+	}
+	const PvrProfile::Profile& profile = loaded->profile;
+	const IpdReading reading = ReadIpd(*loaded, s_hidSerial);
+	float ipd = 0;
+	std::string source;
+	if(reading.valid){
+		if(!s_hidEverRead){
+			// forget the fixed IPD's readings
+			s_filter.Reset();
+			s_hidEverRead = true;
+		}
+		ipd = reading.ipd;
+		source = reading.source;
+	}else if(s_hidEverRead){
+		source = "HID can't be read now: holding the IPD";
+	}else{
+		ipd = s_fixedIpd;
+		source = "fixed, the last known IPD (the headset's can't be read)";
+	}
+	if(s_lastSource != source){
+		s_lastSource = source;
+		DriverLog("IPD source: %s", source.c_str());
+	}
+	if(!reading.valid && s_hidEverRead){
+		s_filter.Hold();
+		return;
+	}
+	const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	const float applied = s_appliedIpd;
+	if(!s_filter.Update(ipd, seconds, applied, profile.MinIpd(), profile.MaxIpd(), ipd)){
+		return;
+	}
+	std::shared_ptr<const PvrCache::Data> blend = MakeBlend(profile, ipd);
+	const float ipdMm = blend->Ipd();
+	const float cantingAngle = blend->CantingAngle();
+	{
+		// EnsurePvrSession writes PVR's values under a shared lock; they win if it connected meanwhile
+		std::lock_guard<std::shared_mutex> pvrLock(PimaxCommon::pvrLock);
+		if(!s_useSavedData || s_info->pvrConnected){
+			return;
+		}
+		SetSavedData(std::move(blend));
+		s_info->ipd = ipdMm;
+		s_info->cantingAngle = cantingAngle;
+	}
+	DriverLog("IPD %.1f -> %.1f mm (%s, HID raw %d): rebuilding the distortion from the profile", applied * 1000.f,
+		ipd * 1000.f, source.c_str(), reading.raw);
+	s_appliedIpd = ipd;
+	s_savedDataChanged = true;
 }
 #endif
 
@@ -107,7 +307,34 @@ bool IdentifyWithoutPvr(PimaxInfo& info){
 	uint32_t resolutionX = 0, resolutionY = 0;
 	float ipd = 0, cantingAngle = 0;
 #ifdef PVR_EXISTS
-	const PvrCache::Data* savedData = LoadSavedPvrData(*identity);
+	// the IPD profile if there is one, otherwise the single saved capture (whose IPD is then the fallback IPD)
+	const LoadedProfile* loaded = LoadProfile(*identity);
+	const std::shared_ptr<const PvrCache::Data> singleData = LoadSavedPvrData(*identity, !loaded);
+	std::shared_ptr<const PvrCache::Data> savedData = singleData;
+	// only the 8K X's IPD can be read over HID
+	const bool followHid = loaded && identity->headsetType == Config::HeadsetType::Pimax8KX;
+	IpdReading ipdReading;
+	float fixedIpd = 0, initialIpd = 0;
+	if(loaded){
+		const PvrProfile::Profile& profile = loaded->profile;
+		fixedIpd = ClampToProfile(profile, singleData ? PvrProfile::PvrIpd(*singleData) : profile.captures[profile.captures.size() / 2].pvrIpd);
+		if(followHid){
+			ipdReading = ReadIpd(*loaded, identity->serialNumber);
+		}
+		initialIpd = ipdReading.valid ? ClampToProfile(profile, ipdReading.ipd) : fixedIpd;
+		if(!ipdReading.valid){
+			ipdReading.source = followHid ? "fixed, the last known IPD (the headset's can't be read yet)" : "fixed, the last known IPD (only the 8K X's can be read)";
+		}
+		// the first blend's texture sizes are kept for every blend
+		const PvrCache::Data first = PvrProfile::Blend(profile, initialIpd);
+		for(int vrf = 0; vrf < 2; vrf++){
+			for(int e = 0; e < 2; e++){
+				s_pinnedTexture[vrf][e][0] = first.eyes[vrf][e].textureWidth;
+				s_pinnedTexture[vrf][e][1] = first.eyes[vrf][e].textureHeight;
+			}
+		}
+		savedData = MakeBlend(profile, initialIpd);
+	}
 	if(savedData){
 		if(headsetType == Config::HeadsetType::None){
 			// the model from the PVR product name saved with the data (eg: a 5K Plus or an Artisan that
@@ -150,7 +377,12 @@ bool IdentifyWithoutPvr(PimaxInfo& info){
 			std::lock_guard<std::mutex> savedDataLock(s_savedDataLock);
 			s_identifiedSerial = identity->serialNumber;
 		}
-		s_savedData = savedData;
+		s_hidSerial = identity->serialNumber;
+		SetSavedData(savedData);
+		s_profile = loaded;
+		s_appliedIpd = initialIpd;
+		s_fixedIpd = fixedIpd;
+		s_info = &info;
 #endif
 		// the image from the saved data works; PVR's isn't usable before its panel is ready
 		WaitForPanelWithoutLimit();
@@ -168,7 +400,15 @@ bool IdentifyWithoutPvr(PimaxInfo& info){
 		info.connected = true;
 	}
 #ifdef PVR_EXISTS
-	if(savedData){
+	if(loaded){
+		const PvrProfile::Profile& profile = loaded->profile;
+		DriverLog("Using the IPD profile for '%s' (serial %s): %d captures, IPD %.1f-%.1f mm; IPD %.1f mm (%s, HID raw %d)",
+			profile.productName.c_str(), MaskSerial(identity->serialNumber).c_str(), (int)profile.captures.size(),
+			profile.MinIpd() * 1000.f, profile.MaxIpd() * 1000.f, initialIpd * 1000.f, ipdReading.source, ipdReading.raw);
+		if(followHid){
+			StartIpdFollower(FollowIpd);
+		}
+	}else if(savedData){
 		const std::string captured = savedData->CaptureTimeString();
 		DriverLog("Using saved PVR data for '%s' (serial %s) from %s, %d days old: panel %dx%d, IPD %.1f mm, canting %.2f deg",
 			savedData->productName.c_str(), MaskSerial(identity->serialNumber).c_str(), captured.c_str(), savedData->AgeDays(),
@@ -208,12 +448,28 @@ bool PvrTookOver(){
 	return true;
 }
 
-bool PvrWentAway(){
-	if(!s_identified || s_useSavedData || PimaxCommon::GetInfo().pvrConnected){
+bool SavedDataChanged(){
+	if(!s_identified){
+		return false;
+	}
+	if(s_useSavedData){
+		return s_savedDataChanged.exchange(false);
+	}
+	if(PimaxCommon::GetInfo().pvrConnected){
 		return false;
 	}
 	s_useSavedData = true;
+	s_savedDataChanged = false;
 	DriverLog("PVR disconnected: using the saved data again");
+	if(s_profile){
+		// PVR's last IPD and canting are still in PimaxInfo: those of the blend in use go with the mesh
+		const std::shared_ptr<const PvrCache::Data> data = SavedData();
+		std::lock_guard<std::shared_mutex> pvrLock(PimaxCommon::pvrLock);
+		if(data && !s_info->pvrConnected){
+			s_info->ipd = data->Ipd();
+			s_info->cantingAngle = data->CantingAngle();
+		}
+	}
 	return true;
 }
 
@@ -232,7 +488,7 @@ bool SavedEyeFov(vr::EVREye eye, pvrFovPort& fov){
 	if(!s_useSavedData){
 		return false;
 	}
-	const PvrCache::Data* data = s_savedData;
+	const std::shared_ptr<const PvrCache::Data> data = SavedData();
 	if(!data){
 		fov.LeftTan = fov.RightTan = fov.UpTan = fov.DownTan = 1.f;
 		return true;
@@ -249,7 +505,7 @@ bool SavedDistortedUV(vr::EVREye eye, pvrVector2f uv, pvrVector2f outUV[3]){
 	if(!s_useSavedData){
 		return false;
 	}
-	const PvrCache::Data* data = s_savedData;
+	const std::shared_ptr<const PvrCache::Data> data = SavedData();
 	const int viewRotationFix = ViewRotationFix();
 	for(int channel = 0; channel < 3; channel++){
 		outUV[channel] = uv;
@@ -264,7 +520,7 @@ bool SavedFovTextureSize(pvrSizei& size){
 	if(!s_useSavedData){
 		return false;
 	}
-	const PvrCache::Data* data = s_savedData;
+	const std::shared_ptr<const PvrCache::Data> data = SavedData();
 	if(!data){
 		size.w = (int)s_identifiedWidth;
 		size.h = (int)s_identifiedHeight;
@@ -413,16 +669,20 @@ static bool CapturePvrData(pvrSessionHandle session, PvrCache::Data& data, std::
 
 // Keeps data that was just saved, for the identified headset (when PVR goes away again)
 static void KeepSavedPvrData(PvrCache::Data&& data){
-	std::lock_guard<std::mutex> lock(s_savedDataLock);
-	std::unique_ptr<const PvrCache::Data>& entry = s_loadedData[data.serial];
-	// the Saved* functions may still be reading the previous data, so it is kept
-	static std::vector<std::unique_ptr<const PvrCache::Data>> s_replaced;
-	if(entry){
-		s_replaced.push_back(std::move(entry));
+	std::shared_ptr<const PvrCache::Data> entry = std::make_shared<const PvrCache::Data>(std::move(data));
+	bool identified = false;
+	{
+		std::lock_guard<std::mutex> lock(s_savedDataLock);
+		s_loadedData[entry->serial] = entry;
+		identified = s_identified && entry->serial == s_identifiedSerial;
 	}
-	entry = std::make_unique<const PvrCache::Data>(std::move(data));
-	if(s_identified && entry->serial == s_identifiedSerial){
-		s_savedData = entry.get();
+	if(identified){
+		if(const LoadedProfile* loaded = s_profile){
+			// the profile stays in use; this is now the last known IPD
+			s_fixedIpd = ClampToProfile(loaded->profile, PvrProfile::PvrIpd(*entry));
+		}else{
+			SetSavedData(entry);
+		}
 	}
 }
 

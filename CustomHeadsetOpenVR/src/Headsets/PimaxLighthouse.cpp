@@ -108,8 +108,8 @@ void PimaxLighthouseShim::RunFrame(){
 			SetVisibilityMeshes();
 		}
 		RequestDistortionRebuild();
-	} else if (PimaxP2::PvrWentAway()) {
-		// back to the saved data
+	} else if (PimaxP2::SavedDataChanged()) {
+		// back to the saved data, or it changed (IPD)
 		RequestDistortionRebuild();
 	}
 	if (driverConfig.hasBeenUpdated) {

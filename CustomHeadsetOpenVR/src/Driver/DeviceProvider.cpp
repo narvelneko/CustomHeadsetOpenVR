@@ -21,6 +21,7 @@
 #include "../Helpers/EyeTrackingOutput.h"
 #include "../Helpers/AAPVRBlocker.h"
 #include "../Helpers/MiscHelper.h"
+#include "../Helpers/PimaxP2.h"
 
 #include "../Config/ConfigLoader.h"
 
@@ -75,6 +76,8 @@ vr::EVRInitError CustomHeadsetDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	WriteHasBeenRunSetting(driverName.c_str());
 	
 	driverConfigLoader.Start();
+	// before the Lighthouse driver looks for the headset, so the display comes up meanwhile
+	PimaxP2::StartDisplayPower();
 	// inject hooks into functions
 	InjectHooks(this, pDriverContext);
 	hidModifier.InjectHooks();
@@ -130,7 +133,9 @@ const char *const *CustomHeadsetDeviceProvider::GetInterfaceVersions(){
 bool CustomHeadsetDeviceProvider::ShouldBlockStandbyMode(){
 	return false;
 }
-void CustomHeadsetDeviceProvider::Cleanup(){}
+void CustomHeadsetDeviceProvider::Cleanup(){
+	PimaxP2::StopDisplayPower();
+}
 void CustomHeadsetDeviceProvider::EnterStandby(){}
 void CustomHeadsetDeviceProvider::LeaveStandby(){}
 

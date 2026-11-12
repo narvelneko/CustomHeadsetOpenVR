@@ -176,6 +176,9 @@ bool IdentifyWithoutPvr(PimaxInfo& info){
 		DriverLog("IPD from %s; reopen Pimax Play once to refresh after changing the IPD", captured.c_str());
 	}
 #endif
+	if(headsetType == Config::HeadsetType::Pimax8KX && !driverConfig.pimax8KX.displayPowerWithoutPimax){
+		DriverLog("If the 8K X's display isn't found after a power cycle, displayPowerWithoutPimax (experimental) can switch it on");
+	}
 	DriverLog("Identified P2 headset over USB without PVR: '%s' (%04x:%04x), type %d, %ux%u per eye", identity->productName.c_str(),
 		kUsbVendorId, kUsbProductId, (int)headsetType, resolutionX, resolutionY);
 	return true;
@@ -493,6 +496,10 @@ public:
 	// returns true if view_rotation_fix was changed in PVR (and set back) to read the data
 	bool Run(bool lighthouseShimActive){
 		const PimaxInfo info = PimaxCommon::GetInfo();
+		if(info.pvrConnected){
+			// the display power pauses while PVR is connected
+			NotePvrConnected();
+		}
 		if(!info.pvrConnected || !IsP2HeadsetType(info.headsetType)){
 			*this = {};
 			return false;

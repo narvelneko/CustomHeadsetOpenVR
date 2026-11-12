@@ -44,4 +44,24 @@ namespace PimaxP2 {
 	// From now on IsPvrPanelReady waits for the panel without the 15 s limit: the headset runs on saved
 	// data meanwhile (PimaxP2PvrData), which is better than PVR without a panel
 	void WaitForPanelWithoutLimit();
+
+	// Experimental (displayPowerWithoutPimax): switches the 8K X's display on without Pimax's software.
+	// After a power cycle the display stays off until pi_server has opened the headset. A thread sends
+	// the display-on sequence (HID feature reports on interface 0) and then a keepalive every second;
+	// without the keepalive the display turns off about 5 minutes later. It pauses while pi_server.exe
+	// runs (checked every 5 s) or PVR is connected (NotePvrConnected), and switches the display on again
+	// when they are gone.
+	// Only USB devices whose product string is the 8K X's ("Pimax P2N") are written to.
+	// Does nothing unless the 8K X is enabled and its displayPowerWithoutPimax is set, or if it is
+	// already running. Call when the driver starts, after the config is loaded.
+	void StartDisplayPower();
+	// Stops the thread and closes the headset; called when the driver shuts down
+	void StopDisplayPower();
+	// The display appears about 3.4 s after the sequence, and SteamVR looks for it when the HMD is
+	// activated. Call before activating the HMD: waits until 4 s have passed since the display-on
+	// sequence was first sent (if it was). Returns at once when the display power isn't running.
+	void WaitForDisplayBeforeActivation();
+	// Called while PVR is connected (PVR thread, every 20 ms); the display power counts PVR as connected
+	// until a second after the last call
+	void NotePvrConnected();
 }

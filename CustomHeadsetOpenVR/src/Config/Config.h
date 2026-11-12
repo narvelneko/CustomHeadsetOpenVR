@@ -285,6 +285,9 @@ public:
 		// P2 headsets (5K/8K series, Artisan): save PVR's data (FOV, eye poses, distortion) while
 		// PVR is connected, to use it when the headset runs on Lighthouse with pi_server closed
 		bool savePvrData = true;
+		// Pimax 8K X, experimental: switch the display on and keep it on while pi_server is not running
+		// (read when SteamVR starts)
+		bool displayPowerWithoutPimax = false;
 	};
 	
 	class MeganeX8KConfig : public BaseHeadsetConfig{

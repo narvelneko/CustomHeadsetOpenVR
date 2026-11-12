@@ -2,6 +2,7 @@
 
 #include "../Helpers/EyeTrackingOutput.h"
 #include "../Helpers/MiscHelper.h"
+#include "../Helpers/PimaxP2.h"
 #ifdef PVR_EXISTS
 #include "../Helpers/PimaxCamera.h"
 #include "../Helpers/PimaxP2PvrData.h"
@@ -43,6 +44,12 @@ void PimaxLighthouseShim::PosTrackedDeviceGetComponent(const char*& pchComponent
 		returnComponent = s_cameraDriver.get();
 	}
 #endif
+}
+
+bool PimaxLighthouseShim::PreTrackedDeviceActivate(uint32_t& unObjectId, vr::EVRInitError& returnValue){
+	// SteamVR looks for the display when the HMD is activated (PimaxP2 display power)
+	PimaxP2::WaitForDisplayBeforeActivation();
+	return true;
 }
 
 void PimaxLighthouseShim::PosTrackedDeviceActivate(uint32_t& unObjectId, vr::EVRInitError& returnValue){

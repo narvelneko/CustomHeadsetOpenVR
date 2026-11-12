@@ -206,6 +206,9 @@ void parseBaseHeadsetConfig(json headsetData, Config::BaseHeadsetConfig& headset
 		if(headsetData["savePvrData"].is_boolean()){
 			pimaxConfig->savePvrData = headsetData["savePvrData"].get<bool>();
 		}
+		if(headsetData["displayPowerWithoutPimax"].is_boolean()){
+			pimaxConfig->displayPowerWithoutPimax = headsetData["displayPowerWithoutPimax"].get<bool>();
+		}
 	}
 }
 
@@ -605,6 +608,7 @@ ordered_json baseHeadsetInfo(Config::BaseHeadsetConfig& headsetConfig){
 		result["enablePimaxHandTracking"] = pimaxConfig->enablePimaxHandTracking;
 		result["pimaxLegacyHandTrackingInput"] = pimaxConfig->pimaxLegacyHandTrackingInput;
 		result["savePvrData"] = pimaxConfig->savePvrData;
+		result["displayPowerWithoutPimax"] = pimaxConfig->displayPowerWithoutPimax;
 	}
 	return result;
 }

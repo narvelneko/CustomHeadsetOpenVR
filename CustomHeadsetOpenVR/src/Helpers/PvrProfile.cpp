@@ -492,35 +492,39 @@ bool IpdFilter::Update(float ipd, double seconds, float applied, float minIpd, f
 	if(samples.size() > 3){
 		samples.erase(samples.begin());
 	}
+	if(samples.size() < 3){
+		// a median of 3 rejects a single outlier
+		return false;
+	}
 	std::vector<float> sorted = samples;
 	std::sort(sorted.begin(), sorted.end());
-	float filtered = sorted[sorted.size() / 2];
+	float filtered = sorted[1];
 	filtered = filtered < minIpd ? minIpd : filtered > maxIpd ? maxIpd : filtered;
-	if(std::fabs(filtered - applied) < 0.0002f){
-		pending = false;
+	if(!tracking || std::fabs(filtered - lastFiltered) > 0.0001f){
+		tracking = true;
+		lastFiltered = filtered;
+		stableSince = seconds;
+	}
+	const float distance = std::fabs(filtered - applied);
+	const bool turning = distance >= 0.0002f && (!appliedBefore || seconds - lastApply >= 0.5);
+	const bool settled = distance >= 0.0001f && seconds - stableSince >= 0.5;
+	if(!turning && !settled){
 		return false;
 	}
-	if(!pending || std::fabs(filtered - pendingIpd) > 0.0001f){
-		pending = true;
-		pendingSince = seconds;
-		pendingIpd = filtered;
-		return false;
-	}
-	if(seconds - pendingSince < 0.9){
-		return false;
-	}
-	pending = false;
+	appliedBefore = true;
+	lastApply = seconds;
 	result = filtered;
 	return true;
 }
 
 void IpdFilter::Hold(){
-	pending = false;
+	tracking = false;
 }
 
 void IpdFilter::Reset(){
 	samples.clear();
-	pending = false;
+	tracking = false;
+	appliedBefore = false;
 }
 
 }

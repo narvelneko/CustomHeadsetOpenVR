@@ -474,7 +474,7 @@ std::optional<uint16_t> ReadIpdRaw(std::string_view serial){
 	return (uint16_t)(report[36] | (report[37] << 8));
 }
 
-// Calls tick about once a second until stopped
+// Calls tick five times a second until stopped
 class IpdFollower {
 public:
 	explicit IpdFollower(std::function<void()> tick) : tick(std::move(tick)) {
@@ -512,7 +512,7 @@ private:
 				DriverLog("IPD follower: unknown exception");
 			}
 			lock.lock();
-			wake.wait_for(lock, std::chrono::seconds(1), [this]{ return stopping; });
+			wake.wait_for(lock, std::chrono::milliseconds(200), [this]{ return stopping; });
 		}
 	}
 

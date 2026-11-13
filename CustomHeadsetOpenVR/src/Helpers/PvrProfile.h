@@ -102,21 +102,24 @@ namespace PvrProfile {
 	// the same, making the calibration for this call
 	bool CalibratedIpd(const Profile& profile, uint16_t raw, float& ipd);
 
-	// When to apply a new IPD, from readings about once a second: the median of the last 3 readings,
-	// clamped to the profile's range, is applied when it is 0.2 mm or more from the applied IPD and has
-	// stayed within 0.1 mm for 0.9 s. Jitter of a few raw counts neither stalls nor repeats it.
+	// When to apply a new IPD, from readings several times a second. The median of the last 3 readings,
+	// clamped to the profile's range, is followed while the dial turns: applied when it is 0.2 mm or more
+	// from the applied IPD, at most every 0.5 s. Once it has stayed within 0.1 mm for 0.5 s it is applied
+	// if it is 0.1 mm or more away, so the final IPD is exact. Jitter of a few raw counts never applies.
 	class IpdFilter {
 	public:
 		// a reading (metres) at a time (seconds); true with the IPD to apply in result
 		bool Update(float ipd, double seconds, float applied, float minIpd, float maxIpd, float& result);
-		// no reading this time (the IPD is held): a pending change starts over
+		// no reading this time (the IPD is held): it has to be stable again before it settles
 		void Hold();
 		// forget the readings too (another source, or PVR took over)
 		void Reset();
 	private:
 		std::vector<float> samples;
-		bool pending = false;
-		double pendingSince = 0;
-		float pendingIpd = 0;
+		bool tracking = false;
+		float lastFiltered = 0;
+		double stableSince = 0;
+		bool appliedBefore = false;
+		double lastApply = 0;
 	};
 }

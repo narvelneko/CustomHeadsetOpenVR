@@ -218,7 +218,7 @@ static IpdReading ReadIpd(const LoadedProfile& loaded, std::string_view serial){
 	return reading;
 }
 
-// Runs about once a second on PimaxP2's IPD follower thread (8K X with a profile). While there is no
+// Runs five times a second on PimaxP2's IPD follower thread (8K X with a profile). While there is no
 // PVR it blends the profile again when PvrProfile::IpdFilter says so. When HID can't be read it holds
 // the applied IPD; the fixed IPD is used only while HID was never read.
 static void FollowIpd(){
@@ -276,7 +276,7 @@ static void FollowIpd(){
 		s_info->ipd = ipdMm;
 		s_info->cantingAngle = cantingAngle;
 	}
-	DriverLog("IPD %.1f -> %.1f mm (%s, HID raw %d): rebuilding the distortion from the profile", applied * 1000.f,
+	DriverLog("IPD %.1f -> %.1f mm (%s, latest HID raw %d): rebuilding the distortion from the profile", applied * 1000.f,
 		ipd * 1000.f, source.c_str(), reading.raw);
 	s_appliedIpd = ipd;
 	s_savedDataChanged = true;

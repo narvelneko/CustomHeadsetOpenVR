@@ -70,7 +70,7 @@ namespace PimaxP2 {
 	// wants it. nullopt when it can't be read; when the headset isn't found it is looked for again only
 	// after 10 s.
 	std::optional<uint16_t> ReadIpdRaw(std::string_view serial);
-	// Calls tick about once a second from a thread of its own, until Stop (an exception from tick is
+	// Calls tick five times a second from a thread of its own, until Stop (an exception from tick is
 	// logged, and the next tick runs as usual). Does nothing if already running.
 	void StartIpdFollower(std::function<void()> tick);
 
